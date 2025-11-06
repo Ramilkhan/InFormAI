@@ -27,22 +27,26 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is not None:
-    # Derive local filename dynamically from uploaded file
+    # Derive local filename dynamically
     base_name = os.path.splitext(uploaded_file.name)[0]
     LOCAL_FILE = f"{base_name}.xlsx"
 
-    # Save uploaded file locally (overwrite only once)
+    # Save uploaded file properly
     file_bytes = uploaded_file.read()
-    with open(LOCAL_FILE, "wb") as f:
-        f.write(file_bytes)
 
-    # Load headers using BytesIO buffer
     if uploaded_file.name.endswith(".csv"):
-        df = pd.read_csv(BytesIO(file_bytes), nrows=0)
+        # Convert CSV → Excel
+        df_csv = pd.read_csv(BytesIO(file_bytes))
+        df_csv.to_excel(LOCAL_FILE, index=False, engine="openpyxl")
     else:
-        df = pd.read_excel(BytesIO(file_bytes), engine="openpyxl", nrows=0)
+        # Save Excel file directly
+        with open(LOCAL_FILE, "wb") as f:
+            f.write(file_bytes)
 
+    # Load headers for form
+    df = pd.read_excel(LOCAL_FILE, engine="openpyxl", nrows=0)
     columns = df.columns.tolist()
+
     st.success(f"✅ Detected columns: {columns}")
     st.info(f"📁 All new data will be saved to: **{LOCAL_FILE}**")
 
@@ -57,13 +61,13 @@ if uploaded_file is not None:
             save_to_excel(form_data, LOCAL_FILE)
             st.json(form_data)
 
-    # Step 3: Show existing records safely
-    if os.path.exists(LOCAL_FILE):
-        try:
-            preview_df = pd.read_excel(LOCAL_FILE, engine="openpyxl")
-            st.subheader("📊 Current Records in File")
-            st.dataframe(preview_df)
-        except Exception as e:
-            st.warning(f"⚠️ Could not preview Excel file: {e}")
+    # Step 3: Show current records
+    try:
+        preview_df = pd.read_excel(LOCAL_FILE, engine="openpyxl")
+        st.subheader("📊 Current Records in File")
+        st.dataframe(preview_df)
+    except Exception as e:
+        st.warning(f"⚠️ Could not preview Excel file: {e}")
+
 else:
     st.info("⬆️ Please upload your Excel or CSV file to begin.")
