@@ -1,69 +1,105 @@
 import streamlit as st
 import pandas as pd
-import os
+import io
 
-# Output Excel file
-OUTPUT_FILE = "allocation_records.xlsx"
+st.set_page_config(page_title="Excel Form Editor", page_icon="📋", layout="centered")
 
-st.set_page_config(page_title="Excel Form Generator", page_icon="📋", layout="centered")
-
-st.title("📋 Excel-Based Form Entry")
-st.write("Upload an Excel or CSV file to automatically create a form for data entry.")
+st.title("📋 Excel-Based Form & Editor")
+st.write("Upload an Excel or CSV file to create and edit records dynamically.")
 
 # --- Step 1: Upload file ---
 uploaded_file = st.file_uploader("Upload Excel or CSV file", type=["xlsx", "xls", "csv"])
 
 if uploaded_file is not None:
-    # Detect file type and read columns
+    # Read uploaded file into DataFrame
     if uploaded_file.name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file, nrows=0)
+        df = pd.read_csv(uploaded_file)
     else:
-        df = pd.read_excel(uploaded_file, nrows=0)
+        df = pd.read_excel(uploaded_file, engine="openpyxl")
 
-    columns = df.columns.tolist()
+    # If file has no ID column, add one
+    if "ID" not in df.columns:
+        df.insert(0, "ID", range(1, len(df) + 1))
+
+    columns = [c for c in df.columns if c != "ID"]
     st.success(f"Detected columns: {columns}")
 
     st.divider()
-    st.subheader("Fill in the details below:")
 
-    # --- Step 2: Dynamic form creation ---
-    inputs = {}
-    with st.form("data_entry_form"):
-        for col in columns:
-            # Basic text input for all columns (can be extended later)
-            inputs[col] = st.text_input(f"{col}", placeholder=f"Enter {col}")
-        submitted = st.form_submit_button("Submit")
+    # --- Mode Selection ---
+    mode = st.radio("Select Mode", ["➕ Add New Record", "✏️ Edit Existing Record"], horizontal=True)
 
-    # --- Step 3: Save data ---
-    if submitted:
-        # Check if output file exists
-        if os.path.exists(OUTPUT_FILE):
-            records_df = pd.read_excel(OUTPUT_FILE, engine='openpyxl')
-        else:
-            records_df = pd.DataFrame(columns=['ID'] + columns)
+    if mode == "➕ Add New Record":
+        st.subheader("Add New Record")
 
-        # Generate new ID
-        new_id = len(records_df) + 1
-        record_with_id = {'ID': new_id, **{col: inputs[col] for col in columns}}
+        with st.form("add_form"):
+            inputs = {col: st.text_input(f"{col}", placeholder=f"Enter {col}") for col in columns}
+            submitted = st.form_submit_button("Submit")
 
-        # Convert to DataFrame and append
-        record_df = pd.DataFrame([record_with_id])
-        records_df = pd.concat([records_df, record_df], ignore_index=True)
+        if submitted:
+            new_id = df["ID"].max() + 1 if not df.empty else 1
+            record = {"ID": new_id, **{col: inputs[col] for col in columns}}
+            df = pd.concat([df, pd.DataFrame([record])], ignore_index=True)
 
-        # Save to Excel
-        records_df.to_excel(OUTPUT_FILE, index=False)
+            # Save changes to same file in memory
+            output = io.BytesIO()
+            if uploaded_file.name.endswith(".csv"):
+                df.to_csv(output, index=False)
+                mime = "text/csv"
+            else:
+                df.to_excel(output, index=False, engine="openpyxl")
+                mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
-        st.success(f"✅ Record saved successfully with ID {new_id}")
-        st.json(record_with_id)
+            st.success(f"✅ Record added successfully with ID {new_id}")
+            st.json(record)
 
-        # Optional download button
-        with open(OUTPUT_FILE, "rb") as f:
             st.download_button(
-                label="📥 Download Updated Excel",
-                data=f,
-                file_name=OUTPUT_FILE,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                label="📥 Download Updated File",
+                data=output.getvalue(),
+                file_name=uploaded_file.name,
+                mime=mime,
             )
+
+    elif mode == "✏️ Edit Existing Record":
+        st.subheader("Edit Existing Record")
+
+        record_id = st.number_input("Enter Record ID to Edit", min_value=1, step=1)
+
+        # Check if ID exists
+        if record_id in df["ID"].values:
+            record = df.loc[df["ID"] == record_id].iloc[0].to_dict()
+
+            with st.form("edit_form"):
+                inputs = {
+                    col: st.text_input(f"{col}", value=str(record[col]) if pd.notna(record[col]) else "")
+                    for col in columns
+                }
+                submitted_edit = st.form_submit_button("Save Changes")
+
+            if submitted_edit:
+                for col in columns:
+                    df.loc[df["ID"] == record_id, col] = inputs[col]
+
+                # Save to memory
+                output = io.BytesIO()
+                if uploaded_file.name.endswith(".csv"):
+                    df.to_csv(output, index=False)
+                    mime = "text/csv"
+                else:
+                    df.to_excel(output, index=False, engine="openpyxl")
+                    mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+                st.success(f"✅ Record with ID {record_id} updated successfully!")
+                st.json({**{"ID": record_id}, **inputs})
+
+                st.download_button(
+                    label="📥 Download Updated File",
+                    data=output.getvalue(),
+                    file_name=uploaded_file.name,
+                    mime=mime,
+                )
+        else:
+            st.warning("⚠️ Record ID not found in the uploaded file.")
 
 else:
     st.info("👆 Please upload an Excel or CSV file to begin.")
