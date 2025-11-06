@@ -1,65 +1,69 @@
-!pip install pandas openpyxl ipywidgets --quiet
-
+import streamlit as st
 import pandas as pd
-import ipywidgets as widgets
-from IPython.display import display, clear_output
-from google.colab import files
 import os
-import datetime
+from io import BytesIO
 
-# File to store submitted records
-output_file = "allocation_records.xlsx"
+st.set_page_config(page_title="📋 FORM GENERATOR", layout="wide")
 
-# Step 1: Upload Excel file with column headers
-uploaded = files.upload()
-for file_name in uploaded.keys():
-    excel_file = file_name
+st.title("📋 FORM GENERATOR")
+st.write("Upload an Excel or CSV file to generate a data entry form. Submissions are saved automatically.")
 
-# Read column headers
-df = pd.read_excel(excel_file, engine='openpyxl', nrows=0)
-columns = df.columns.tolist()
-print(f"Detected columns: {columns}")
+# --- Load Employee Data ---
+EMPLOYEE_FILE = "employees.xlsx"
 
-# Step 2: Create dynamic form widgets
-inputs = {}
-for col in columns:
-    inputs[col] = widgets.Text(
-        description=col,
-        placeholder=f'Enter {col}',
-        layout=widgets.Layout(width='50%')
-    )
+if os.path.exists(EMPLOYEE_FILE):
+    employees_df = pd.read_excel(EMPLOYEE_FILE)
+else:
+    employees_df = pd.DataFrame(columns=["Name", "Email", "WhatsApp"])
+    st.warning("⚠️ Employee file not found. Please make sure employees.xlsx is in the project folder.")
 
-# Step 3: Display the form
-form_items = [inputs[col] for col in columns]
-submit_btn = widgets.Button(description="Submit", button_style='success')
-output = widgets.Output()
+# --- Show Employee List ---
+st.sidebar.header("👥 Employees")
+st.sidebar.dataframe(employees_df)
 
-# Step 4: Function to save data to Excel
-def save_to_excel(record):
-    # Check if file exists
-    if os.path.exists(output_file):
-        records_df = pd.read_excel(output_file, engine='openpyxl')
+# --- File Upload ---
+uploaded_file = st.file_uploader("📂 Upload Excel or CSV file", type=["xlsx", "csv"])
+
+if "data" not in st.session_state:
+    st.session_state.data = None
+
+if uploaded_file is not None:
+    base_name = os.path.splitext(uploaded_file.name)[0]
+    LOCAL_FILE = f"{base_name}.xlsx"
+
+    # Save upload to local session
+    file_bytes = uploaded_file.read()
+    if uploaded_file.name.endswith(".csv"):
+        df_csv = pd.read_csv(BytesIO(file_bytes))
+        df_csv.to_excel(LOCAL_FILE, index=False, engine="openpyxl")
     else:
-        # Initialize empty DataFrame with columns + ID
-        records_df = pd.DataFrame(columns=['ID'] + columns)
+        with open(LOCAL_FILE, "wb") as f:
+            f.write(file_bytes)
 
-    # Generate new ID
-    new_id = len(records_df) + 1
-    record_with_id = {'ID': new_id, **record}
+    df = pd.read_excel(LOCAL_FILE, engine="openpyxl", nrows=0)
+    columns = df.columns.tolist()
 
-    # Append and save
-    records_df = records_df.append(record_with_id, ignore_index=True)
-    records_df.to_excel(output_file, index=False)
-    print(f"Record saved successfully with ID {new_id}")
+    st.session_state.data = {"file": LOCAL_FILE, "columns": columns}
+    st.success("✅ File uploaded successfully!")
 
-# Step 5: Handle form submission
-def on_submit(b):
-    with output:
-        clear_output()
-        record = {col: inputs[col].value for col in columns}
-        save_to_excel(record)
-        print("Form submitted successfully!")
-        display(record)
+if st.session_state.data:
+    LOCAL_FILE = st.session_state.data["file"]
+    columns = st.session_state.data["columns"]
 
-submit_btn.on_click(on_submit)
-display(*form_items, submit_btn, output)
+    st.header("📝 Fill the Form")
+    with st.form("entry_form"):
+        form_data = {col: st.text_input(col) for col in columns}
+        submitted = st.form_submit_button("Submit")
+
+        if submitted:
+            df = pd.read_excel(LOCAL_FILE, engine="openpyxl")
+            new_id = len(df) + 1
+            record = {"ID": new_id, **form_data}
+            df = pd.concat([df, pd.DataFrame([record])], ignore_index=True)
+            df.to_excel(LOCAL_FILE, index=False, engine="openpyxl")
+            st.success(f"✅ Saved successfully with ID {new_id}")
+
+    st.subheader("📊 Current Records")
+    st.dataframe(pd.read_excel(LOCAL_FILE, engine="openpyxl"))
+else:
+    st.info("⬆️ Please upload a file to start.")
