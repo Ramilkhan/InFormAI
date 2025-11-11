@@ -74,7 +74,7 @@ def show_form_interface():
 
             base_url = st.secrets.get("BASE_URL", "http://localhost:8501")
             share_link = f"{base_url}?form_id={form_id}"
-            st.markdown(f"### 🔗 Share this link with employees:")
+            st.markdown("### 🔗 Share this link with employees:")
             st.code(share_link, language="text")
     else:
         st.info("Please upload a form template first.")
@@ -87,4 +87,69 @@ def employee_form_submission():
 
     if form_id:
         file_path = os.path.join(FORM_FOLDER, f"{form_id}.csv")
-        if os.path.exis
+        if os.path.exists(file_path):
+            form_df = pd.read_csv(file_path)
+            form_data = {}
+
+            st.info("Please fill in the form below:")
+            for col in form_df.columns:
+                form_data[col] = st.text_input(f"{col}")
+
+            if st.button("Submit Form"):
+                submission_file = os.path.join(FORM_FOLDER, f"{form_id}_responses.csv")
+
+                if os.path.exists(submission_file):
+                    existing_df = pd.read_csv(submission_file)
+                    existing_df = pd.concat([existing_df, pd.DataFrame([form_data])], ignore_index=True)
+                else:
+                    existing_df = pd.DataFrame([form_data])
+
+                existing_df.to_csv(submission_file, index=False)
+                st.success("✅ Form submitted successfully!")
+        else:
+            st.error("Invalid or expired form link.")
+    else:
+        st.warning("No form ID found in the URL!")
+
+
+# --- DOWNLOAD RESPONSES ---
+def download_responses():
+    st.header("📥 Download Submitted Responses")
+    files = [f for f in os.listdir(FORM_FOLDER) if "_responses.csv" in f]
+
+    if files:
+        selected = st.selectbox("Select form to download:", files)
+        if st.button("⬇️ Download CSV"):
+            df = pd.read_csv(os.path.join(FORM_FOLDER, selected))
+            st.download_button(
+                label="Download Responses",
+                data=df.to_csv(index=False).encode("utf-8"),
+                file_name=selected,
+                mime="text/csv",
+            )
+    else:
+        st.info("No form submissions yet.")
+
+
+# --- MAIN LOGIC ---
+query_params = st.experimental_get_query_params()
+if "form_id" in query_params:
+    employee_form_submission()
+else:
+    if not st.session_state.admin_logged_in:
+        admin_login()
+    else:
+        with st.sidebar:
+            st.title("⚙️ Admin Panel")
+            st.success("✅ Logged in")
+            option = st.radio(
+                "Select Action:",
+                ["Upload Files", "Preview / Create Form", "Download Responses"]
+            )
+
+        if option == "Upload Files":
+            upload_files()
+        elif option == "Preview / Create Form":
+            show_form_interface()
+        elif option == "Download Responses":
+            download_responses()
