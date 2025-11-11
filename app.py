@@ -29,7 +29,7 @@ def admin_login():
         if password == ADMIN_PASSWORD:
             st.session_state.admin_logged_in = True
             st.success("✅ Logged in as Admin!")
-            st.rerun()  # ✅ Updated from experimental_rerun()
+            st.rerun()
         else:
             st.error("❌ Incorrect password!")
 
@@ -55,7 +55,7 @@ def upload_files():
 
 # --- FORM INTERFACE ---
 def show_form_interface():
-    st.header("🧾 Form Preview / Create Share Link")
+    st.header("🧾 Form Preview / Create Shareable Link")
 
     if st.session_state.form_template is not None:
         form_df = st.session_state.form_template
@@ -70,10 +70,14 @@ def show_form_interface():
             form_df.to_csv(form_path, index=False)
             st.success("✅ Form saved successfully!")
 
-            base_url = st.secrets.get("BASE_URL", "http://localhost:8501")
+            # ✅ Use your Streamlit public URL here
+            base_url = st.secrets.get("BASE_URL", "https://informai-9owst2mknhnbtf9ukychaq.streamlit.app")
             share_link = f"{base_url}?form_id={form_id}"
+
             st.markdown("### 🔗 Share this link with employees:")
             st.code(share_link, language="text")
+            st.markdown("📋 Anyone with this link can fill out the form from any browser.")
+
     else:
         st.info("Please upload a form template first.")
 
@@ -81,10 +85,13 @@ def show_form_interface():
 # --- EMPLOYEE FORM VIEW ---
 def employee_form_submission():
     st.title("📝 Employee Form Submission")
-    form_id = st.query_params.get("form_id", [None])[0] if hasattr(st, "query_params") else st.experimental_get_query_params().get("form_id", [None])[0]
+
+    query_params = st.experimental_get_query_params()
+    form_id = query_params.get("form_id", [None])[0]
 
     if form_id:
         file_path = os.path.join(FORM_FOLDER, f"{form_id}.csv")
+
         if os.path.exists(file_path):
             form_df = pd.read_csv(file_path)
             form_data = {}
