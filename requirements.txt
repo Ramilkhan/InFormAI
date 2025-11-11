@@ -1,7 +1,15 @@
+# Core framework
 streamlit==1.39.0
-pandas==2.2.3
-openpyxl==3.1.5
-xlsxwriter==3.2.0
-email-validator==2.2.0
-python-dotenv==1.0.1
 
+# Data handling
+pandas==2.2.3
+openpyxl==3.1.5       # for reading Excel (.xlsx)
+pyarrow==17.0.0        # for Streamlit dataframe display
+
+# Email sending
+secure-smtplib==0.1.1  # optional, for safer SMTP handling
+email-validator==2.2.0 # optional, to validate email addresses
+
+# Utility
+python-dotenv==1.0.1   # for storing SMTP credentials safely in .env file
+requests==2.32.3
