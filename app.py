@@ -1,158 +1,175 @@
 import streamlit as st
 import pandas as pd
 import os
-from io import BytesIO
+import uuid
 import smtplib
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
-# ---------------- CONFIG ----------------
-st.set_page_config(page_title="📋 FORM GENERATOR", layout="wide")
+# ========== CONFIG ==========
+st.set_page_config(page_title="📋 INFORM.AI Form Portal", layout="wide")
 
-# --- Admin password via Streamlit Secrets ---
-try:
-    ADMIN_PASSWORD = st.secrets["ADMIN_PASSWORD"]
-except KeyError:
-    st.error("⚠️ ADMIN_PASSWORD not set in Streamlit Secrets")
-    ADMIN_PASSWORD = None
+# Load secrets safely
+ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin123")
+SMTP_EMAIL = st.secrets.get("SMTP_EMAIL", "")
+SMTP_PASS = st.secrets.get("SMTP_PASS", "")
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587
 
-EMPLOYEE_FILE = "employees.xlsx"
-BASE_URL = "https://yourappname.streamlit.app"  # change after deployment
+# Folders
+os.makedirs("forms", exist_ok=True)
+os.makedirs("submissions", exist_ok=True)
 
-# ---------------- HELPER FUNCTIONS ----------------
-def safe_dataframe(df):
-    """Ensure NaN values and mixed types don't break Streamlit."""
-    return df.fillna("").astype(str)
+# ========== ADMIN LOGIN ==========
+st.title("🔐 Admin Panel")
 
-def send_form_link(email_list, form_link):
-    """Send form link via Gmail SMTP."""
-    sender = "your_email@gmail.com"           # your Gmail
-    password = "your_app_password"            # 16-char Gmail App Password
+if "is_admin" not in st.session_state:
+    st.session_state.is_admin = False
 
-    subject = "📝 New Data Entry Form"
-    body = f"Hello,\n\nPlease fill out this form:\n{form_link}\n\nThank you!"
+if not st.session_state.is_admin:
+    password = st.text_input("Enter admin password", type="password")
+    if st.button("Login"):
+        if password == ADMIN_PASSWORD:
+            st.session_state.is_admin = True
+            st.success("Welcome, Admin!")
+        else:
+            st.error("❌ Incorrect password.")
+    st.stop()
 
-    for recipient in email_list:
-        msg = MIMEText(body)
-        msg["Subject"] = subject
-        msg["From"] = sender
-        msg["To"] = recipient
-        try:
-            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-                server.login(sender, password)
-                server.sendmail(sender, recipient, msg.as_string())
-        except Exception as e:
-            st.error(f"❌ Could not send to {recipient}: {e}")
+# ========== ADMIN PANEL ==========
+st.success("Welcome, Admin!")
 
-def save_record(record, file_path):
-    """Append data to Excel file safely."""
-    if os.path.exists(file_path):
-        df = pd.read_excel(file_path, engine="openpyxl")
-    else:
-        df = pd.DataFrame(columns=["ID"] + list(record.keys()))
-    record["ID"] = len(df) + 1
-    df = pd.concat([df, pd.DataFrame([record])], ignore_index=True)
-    df.to_excel(file_path, index=False, engine="openpyxl")
+uploaded_file = st.file_uploader("📂 Upload Excel/CSV to create new form", type=["xlsx", "csv"])
 
-def download_button(df, filename):
-    """Provide a download link for any DataFrame."""
-    output = BytesIO()
-    df.to_excel(output, index=False, engine="openpyxl")
-    st.download_button(
-        label=f"⬇️ Download {filename}",
-        data=output.getvalue(),
-        file_name=filename,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+if uploaded_file:
+    try:
+        # Read and sanitize data
+        if uploaded_file.name.endswith(".csv"):
+            df = pd.read_csv(uploaded_file)
+        else:
+            df = pd.read_excel(uploaded_file)
+        df = df.fillna("")  # 🔥 Fix NaN error
 
-# ---------------- LOAD EMPLOYEES ----------------
-if os.path.exists(EMPLOYEE_FILE):
-    employees_df = pd.read_excel(EMPLOYEE_FILE)
-    employees_df.columns = employees_df.columns.str.strip().str.lower()
-    employees_df = safe_dataframe(employees_df)
-else:
-    employees_df = pd.DataFrame(columns=["name", "email", "whatsapp"])
-    st.warning("⚠️ employees.xlsx not found!")
+        # Save the uploaded file
+        form_name = os.path.splitext(uploaded_file.name)[0]
+        form_path = f"forms/{form_name}.xlsx"
+        df.to_excel(form_path, index=False)
 
-# ---------------- PAGE LOGIC ----------------
-query_params = st.experimental_get_query_params()
-form_name = query_params.get("form", [None])[0]
+        st.success(f"✅ Form '{form_name}' created successfully!")
 
-if form_name:
-    # ----------- EMPLOYEE VIEW -----------
-    st.title("📝 Fill the Form")
-    file_path = f"{form_name}.xlsx"
+        # Generate unique form link
+        form_id = str(uuid.uuid4())
+        form_link = f"{st.request.url_root}?form_id={form_id}".replace("///", "//")
 
-    if not os.path.exists(file_path):
-        st.error("⚠️ Form not found or expired.")
-    else:
-        df = pd.read_excel(file_path, engine="openpyxl")
-        df = safe_dataframe(df)
-        columns = [col for col in df.columns if col.lower() != "id"]
+        # Save link mapping
+        mapping_path = "forms/mapping.csv"
+        if os.path.exists(mapping_path):
+            mapping_df = pd.read_csv(mapping_path).fillna("")  # 🔥 Fix NaN error
+        else:
+            mapping_df = pd.DataFrame(columns=["form_id", "form_name", "file_path", "link"])
 
-        with st.form("employee_form"):
-            st.write("Please fill out the following fields:")
-            form_data = {col: st.text_input(col) for col in columns}
-            submitted = st.form_submit_button("Submit")
+        new_entry = pd.DataFrame([{
+            "form_id": form_id,
+            "form_name": form_name,
+            "file_path": form_path,
+            "link": form_link
+        }])
+
+        mapping_df = pd.concat([mapping_df, new_entry], ignore_index=True)
+        mapping_df.to_csv(mapping_path, index=False)
+
+        st.markdown(f"🔗 **Form Link:** [Open Form]({form_link})")
+
+        # Upload employee list (optional)
+        emp_file = st.file_uploader("👥 Upload Employee List (with Email column)", type=["xlsx", "csv"])
+        if emp_file:
+            if emp_file.name.endswith(".csv"):
+                employees_df = pd.read_csv(emp_file)
+            else:
+                employees_df = pd.read_excel(emp_file)
+            employees_df = employees_df.fillna("")  # 🔥 Fix NaN error
+
+            if "Email" not in employees_df.columns:
+                st.error("❌ Missing 'Email' column in employee list.")
+            else:
+                emails = employees_df["Email"].dropna().tolist()
+                st.write(f"📧 {len(emails)} employees detected.")
+
+                # Send form link via email
+                if SMTP_EMAIL and SMTP_PASS:
+                    with st.spinner("Sending form links..."):
+                        try:
+                            server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+                            server.starttls()
+                            server.login(SMTP_EMAIL, SMTP_PASS)
+
+                            for email in emails:
+                                msg = MIMEMultipart()
+                                msg["From"] = SMTP_EMAIL
+                                msg["To"] = email
+                                msg["Subject"] = f"Form Invitation: {form_name}"
+                                body = f"Dear Employee,\n\nPlease fill out the form at the link below:\n{form_link}\n\nBest Regards,\nAdmin"
+                                msg.attach(MIMEText(body, "plain"))
+                                server.send_message(msg)
+
+                            server.quit()
+                            st.success("✅ Form links emailed to all employees.")
+                        except Exception as e:
+                            st.error(f"Email send failed: {e}")
+                else:
+                    st.warning("⚠️ SMTP credentials not found in secrets.")
+
+    except Exception as e:
+        st.error(f"Error processing file: {e}")
+
+# ========== FORM VIEW ==========
+if "form_id" in st.query_params:
+    st.title("📋 Form Submission")
+    form_id = st.query_params["form_id"]
+
+    # Load form mapping
+    if os.path.exists("forms/mapping.csv"):
+        mapping_df = pd.read_csv("forms/mapping.csv").fillna("")  # 🔥 Fix NaN error
+        match = mapping_df[mapping_df["form_id"] == form_id]
+        if not match.empty:
+            file_path = match.iloc[0]["file_path"]
+            form_name = match.iloc[0]["form_name"]
+            df = pd.read_excel(file_path).fillna("")  # 🔥 Fix NaN error
+
+            st.subheader(f"Form: {form_name}")
+
+            user_input = {}
+            with st.form("data_entry_form"):
+                for col in df.columns:
+                    user_input[col] = st.text_input(f"{col}")
+                submitted = st.form_submit_button("Submit")
 
             if submitted:
-                save_record(form_data, file_path)
-                st.success("✅ Your response has been recorded. Thank you!")
+                new_row = pd.DataFrame([user_input])
+                output_file = f"submissions/{form_name}_responses.xlsx"
 
-else:
-    # ----------- ADMIN PANEL -----------
-    st.title("🔐 Admin Panel")
-    pw = st.text_input("Enter admin password", type="password")
+                if os.path.exists(output_file):
+                    existing = pd.read_excel(output_file).fillna("")  # 🔥 Fix NaN error
+                    combined = pd.concat([existing, new_row], ignore_index=True)
+                else:
+                    combined = new_row
 
-    if pw and ADMIN_PASSWORD and pw == ADMIN_PASSWORD:
-        st.success("Welcome, Admin!")
+                combined.to_excel(output_file, index=False)
+                st.success("✅ Response submitted successfully!")
 
-        uploaded_file = st.file_uploader(
-            "📂 Upload Excel/CSV to create new form",
-            type=["xlsx", "csv"]
-        )
-
-        if uploaded_file is not None:
-            base_name = os.path.splitext(uploaded_file.name)[0]
-            LOCAL_FILE = f"{base_name}.xlsx"
-
-            # Convert and clean uploaded file
-            file_bytes = uploaded_file.read()
-            if uploaded_file.name.endswith(".csv"):
-                df_csv = pd.read_csv(BytesIO(file_bytes))
-                df_csv = safe_dataframe(df_csv)
-                df_csv.to_excel(LOCAL_FILE, index=False, engine="openpyxl")
-            else:
-                df_xl = pd.read_excel(BytesIO(file_bytes), engine="openpyxl")
-                df_xl = safe_dataframe(df_xl)
-                df_xl.to_excel(LOCAL_FILE, index=False, engine="openpyxl")
-
-            st.success(f"✅ Form '{base_name}' created successfully!")
-            form_link = f"{BASE_URL}/?form={base_name}"
-            st.code(form_link, language="text")
-
-            # --- EMAIL AUTOMATION ---
-            if not employees_df.empty and "email" in employees_df.columns:
-                emails = employees_df["email"].dropna().tolist()
-                if st.button("📧 Send form link to all employees"):
-                    send_form_link(emails, form_link)
-                    st.success("✅ Emails sent to all employees.")
-            else:
-                st.warning("⚠️ No valid employee emails found in employees.xlsx")
-
-            # --- Download the Form Sheet ---
-            st.subheader("📥 Download Form Template")
-            df_download = pd.read_excel(LOCAL_FILE, engine="openpyxl")
-            download_button(df_download, f"{base_name}_template.xlsx")
-
-        # --- Show Employee List Safely ---
-        st.subheader("👥 Employee List")
-        st.dataframe(safe_dataframe(employees_df))
-
-        # --- Download Employee List ---
-        if not employees_df.empty:
-            download_button(employees_df, "employees_list.xlsx")
-
-    elif pw:
-        st.error("❌ Incorrect password")
+        else:
+            st.error("❌ Invalid or expired form link.")
     else:
-        st.info("Please enter admin password to continue.")
+        st.error("❌ No forms found in the system.")
+
+# ========== DOWNLOAD SUBMISSIONS ==========
+st.markdown("---")
+st.header("📥 Download Submissions")
+
+subs = [f for f in os.listdir("submissions") if f.endswith(".xlsx")]
+if subs:
+    for f in subs:
+        with open(f"submissions/{f}", "rb") as file:
+            st.download_button(f"Download {f}", data=file, file_name=f)
+else:
+    st.info("No submissions yet.")
