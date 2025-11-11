@@ -29,7 +29,7 @@ def admin_login():
         if password == ADMIN_PASSWORD:
             st.session_state.admin_logged_in = True
             st.success("✅ Logged in as Admin!")
-            st.experimental_rerun()
+            st.rerun()  # ✅ Updated from experimental_rerun()
         else:
             st.error("❌ Incorrect password!")
 
@@ -42,7 +42,6 @@ def upload_files():
 
     if form_file and employee_file:
         try:
-            # Read files
             form_df = pd.read_csv(form_file) if form_file.name.endswith(".csv") else pd.read_excel(form_file)
             employees_df = pd.read_csv(employee_file) if employee_file.name.endswith(".csv") else pd.read_excel(employee_file)
 
@@ -64,7 +63,6 @@ def show_form_interface():
         st.subheader("📋 Form Preview")
         st.dataframe(form_df)
 
-        # Automatically save the form and generate a link
         if st.button("💾 Generate Shareable Link"):
             form_id = str(uuid.uuid4())
             st.session_state.form_id = form_id
@@ -74,7 +72,7 @@ def show_form_interface():
 
             base_url = st.secrets.get("BASE_URL", "http://localhost:8501")
             share_link = f"{base_url}?form_id={form_id}"
-            st.markdown(f"### 🔗 Share this link with employees:")
+            st.markdown("### 🔗 Share this link with employees:")
             st.code(share_link, language="text")
     else:
         st.info("Please upload a form template first.")
@@ -83,7 +81,7 @@ def show_form_interface():
 # --- EMPLOYEE FORM VIEW ---
 def employee_form_submission():
     st.title("📝 Employee Form Submission")
-    form_id = st.experimental_get_query_params().get("form_id", [None])[0]
+    form_id = st.query_params.get("form_id", [None])[0] if hasattr(st, "query_params") else st.experimental_get_query_params().get("form_id", [None])[0]
 
     if form_id:
         file_path = os.path.join(FORM_FOLDER, f"{form_id}.csv")
