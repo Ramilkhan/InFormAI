@@ -1,158 +1,130 @@
 import streamlit as st
 import pandas as pd
-import uuid
 import os
-import io
-import smtplib
-from email.message import EmailMessage
-from datetime import datetime
+import uuid
 
-st.set_page_config(page_title="Admin Panel - Dynamic Form Generator", layout="wide")
+# --- Page Config ---
+st.set_page_config(page_title="Dynamic Form Generator", layout="wide")
 
-# --- Helpers ---
-def load_forms():
-    if os.path.exists("forms.xlsx"):
-        return pd.read_excel("forms.xlsx")
-    return pd.DataFrame(columns=["form_id", "title", "columns", "created_at"])
-
-def save_forms(df):
-    df.to_excel("forms.xlsx", index=False)
-
-def load_responses(form_id):
-    path = f"responses_{form_id}.xlsx"
-    if os.path.exists(path):
-        return pd.read_excel(path)
-    return pd.DataFrame()
-
-def save_response(form_id, data):
-    df = load_responses(form_id)
-    df = pd.concat([df, pd.DataFrame([data])], ignore_index=True)
-    df.to_excel(f"responses_{form_id}.xlsx", index=False)
-
-def send_emails(emails, subject, body, smtp_host, smtp_port, username, password, sender, use_tls=True):
-    sent = 0
-    for email in emails:
-        try:
-            msg = EmailMessage()
-            msg["Subject"] = subject
-            msg["From"] = sender
-            msg["To"] = email
-            msg.set_content(body)
-            server = smtplib.SMTP(smtp_host, smtp_port)
-            if use_tls:
-                server.starttls()
-            if username:
-                server.login(username, password)
-            server.send_message(msg)
-            server.quit()
-            sent += 1
-        except Exception as e:
-            st.warning(f"Failed to send to {email}: {e}")
-    return sent
-
-# --- Sidebar Navigation ---
-st.sidebar.title("🔐 Admin Panel")
-page = st.sidebar.radio("Go to", ["Create Form", "View Forms", "Fill Form"])
+# --- Constants ---
+ADMIN_PASSWORD = "admin123"  # Change this to your secure password
+FORM_FOLDER = "forms_data"
+if not os.path.exists(FORM_FOLDER):
+    os.makedirs(FORM_FOLDER)
 
 # --- Session State ---
-if "forms" not in st.session_state:
-    st.session_state.forms = load_forms()
+if "admin_logged_in" not in st.session_state:
+    st.session_state.admin_logged_in = False
+if "form_id" not in st.session_state:
+    st.session_state.form_id = None
+if "employee_list" not in st.session_state:
+    st.session_state.employee_list = pd.DataFrame()
 
-# --- CREATE FORM ---
-if page == "Create Form":
-    st.title("📂 Upload Excel/CSV to Create New Form")
-    title = st.text_input("Form Title")
-    upload = st.file_uploader("Upload Excel or CSV file", type=["xlsx", "xls", "csv"])
+# --- Admin Login ---
+def admin_login():
+    st.subheader("Admin Login")
+    password = st.text_input("Enter admin password:", type="password")
+    if st.button("Login"):
+        if password == ADMIN_PASSWORD:
+            st.session_state.admin_logged_in = True
+            st.success("Logged in as Admin!")
+        else:
+            st.error("Incorrect password!")
 
-    st.write("---")
-    st.subheader("📧 Optional: Send form link via Email")
-    smtp_host = st.text_input("SMTP Host", placeholder="smtp.gmail.com")
-    smtp_port = st.number_input("SMTP Port", 587)
-    username = st.text_input("SMTP Username")
-    password = st.text_input("SMTP Password", type="password")
-    sender = st.text_input("Sender Email")
-    emails_text = st.text_area("Employee Emails (comma or newline separated)")
+# --- Upload Excel Files ---
+def upload_files():
+    st.subheader("Upload Excel Files")
+    form_file = st.file_uploader("Upload Form Template Excel", type=["xlsx", "csv"])
+    employee_file = st.file_uploader("Upload Employee List Excel", type=["xlsx", "csv"])
 
-    if st.button("Generate Form"):
-        if upload and title:
-            ext = upload.name.split(".")[-1].lower()
-            if ext == "csv":
-                df = pd.read_csv(upload, nrows=0)
+    if form_file and employee_file:
+        try:
+            if form_file.name.endswith(".csv"):
+                form_df = pd.read_csv(form_file)
             else:
-                df = pd.read_excel(upload, nrows=0)
-            columns = list(df.columns)
-            form_id = uuid.uuid4().hex
-            created_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+                form_df = pd.read_excel(form_file)
+            
+            if employee_file.name.endswith(".csv"):
+                employees_df = pd.read_csv(employee_file)
+            else:
+                employees_df = pd.read_excel(employee_file)
+            
+            st.session_state.form_template = form_df
+            st.session_state.employee_list = employees_df
+            st.success("Files uploaded successfully!")
+        except Exception as e:
+            st.error(f"Error reading files: {e}")
 
-            # Save form metadata
-            forms_df = load_forms()
-            new_row = pd.DataFrame([{
-                "form_id": form_id,
-                "title": title,
-                "columns": ",".join(columns),
-                "created_at": created_at
-            }])
-            forms_df = pd.concat([forms_df, new_row], ignore_index=True)
-            save_forms(forms_df)
-            st.session_state.forms = forms_df
+# --- Generate Form ---
+def show_form_interface():
+    st.subheader("Form Preview / Fill")
+    if "form_template" in st.session_state:
+        form_df = st.session_state.form_template
+        form_data = {}
+        for col in form_df.columns:
+            form_data[col] = st.text_input(f"{col}")
+        if st.button("Submit Form Data (Admin View)"):
+            form_id = str(uuid.uuid4())
+            st.session_state.form_id = form_id
+            file_path = os.path.join(FORM_FOLDER, f"{form_id}.csv")
+            pd.DataFrame([form_data]).to_csv(file_path, index=False)
+            st.success(f"Data saved! Form ID: {form_id}")
+            st.info(f"File path: {file_path}")
 
-            form_link = f"?page=Fill%20Form&form_id={form_id}"
-            full_link = f"{st.request.url_root}{form_link}"
-            st.success("✅ Form created successfully!")
-            st.markdown(f"**Form Link:** [Open Form]({full_link})")
+# --- Generate Shareable Link ---
+def generate_form_link():
+    if st.session_state.form_id:
+        st.subheader("Shareable Form Link")
+        form_link = f"{st.secrets.get('BASE_URL', 'http://localhost:8501')}?form_id={st.session_state.form_id}"
+        st.text_input("Copy this link:", form_link)
 
-            # Optional email sending
-            if emails_text.strip() and smtp_host and sender:
-                emails = [e.strip() for e in emails_text.replace(",", "\n").splitlines() if e.strip()]
-                subject = f"Please fill out: {title}"
-                body = f"Hello,\n\nPlease fill out this form:\n{full_link}\n\nThank you!"
-                sent = send_emails(emails, subject, body, smtp_host, smtp_port, username, password, sender)
-                st.info(f"📤 Emails sent: {sent}")
-        else:
-            st.warning("Please provide a title and file.")
-
-# --- VIEW FORMS ---
-elif page == "View Forms":
-    st.title("📋 All Created Forms")
-    forms_df = load_forms()
-    if not forms_df.empty:
-        st.dataframe(forms_df)
-        selected = st.selectbox("Select a form to view submissions", forms_df["title"])
-        form_row = forms_df[forms_df["title"] == selected].iloc[0]
-        form_id = form_row["form_id"]
-        resp_df = load_responses(form_id)
-        st.subheader("📥 Form Responses")
-        if not resp_df.empty:
-            st.dataframe(resp_df)
-            buf = io.BytesIO()
-            with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-                resp_df.to_excel(writer, index=False)
-            st.download_button("⬇️ Download Responses", data=buf.getvalue(),
-                               file_name=f"responses_{form_id}.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        else:
-            st.info("No responses yet.")
-    else:
-        st.info("No forms created yet.")
-
-# --- FILL FORM ---
-elif page == "Fill Form":
-    st.title("📝 Fill Form")
+# --- Employee Form Submission ---
+def employee_form_submission():
+    st.subheader("Employee Form")
     form_id = st.experimental_get_query_params().get("form_id", [None])[0]
-    if not form_id:
-        st.warning("Form ID not provided. Use a valid form link.")
-    else:
-        forms_df = load_forms()
-        if form_id not in forms_df["form_id"].values:
-            st.error("Form not found.")
-        else:
-            form = forms_df[forms_df["form_id"] == form_id].iloc[0]
-            st.subheader(form["title"])
-            cols = form["columns"].split(",")
-            data = {}
-            for c in cols:
-                data[c] = st.text_input(c)
+    if form_id:
+        file_path = os.path.join(FORM_FOLDER, f"{form_id}.csv")
+        if os.path.exists(file_path):
+            form_df = pd.read_csv(file_path)
+            form_data = {}
+            for col in form_df.columns:
+                form_data[col] = st.text_input(f"{col}")
             if st.button("Submit"):
-                data["Submitted_At"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-                save_response(form_id, data)
-                st.success("✅ Your response has been recorded.")
+                submission_file = os.path.join(FORM_FOLDER, f"{form_id}_responses.csv")
+                if os.path.exists(submission_file):
+                    existing_df = pd.read_csv(submission_file)
+                    existing_df = pd.concat([existing_df, pd.DataFrame([form_data])])
+                else:
+                    existing_df = pd.DataFrame([form_data])
+                existing_df.to_csv(submission_file, index=False)
+                st.success("Form submitted successfully!")
+        else:
+            st.error("Invalid Form ID!")
+
+# --- Download Responses ---
+def download_responses():
+    st.subheader("Download Submitted Responses")
+    files = [f for f in os.listdir(FORM_FOLDER) if "_responses.csv" in f]
+    if files:
+        file_to_download = st.selectbox("Select Form to Download", files)
+        if st.button("Download CSV"):
+            df = pd.read_csv(os.path.join(FORM_FOLDER, file_to_download))
+            df.to_csv(file_to_download, index=False)
+            st.success(f"Downloaded {file_to_download}")
+    else:
+        st.info("No submissions yet.")
+
+# --- Main ---
+query_params = st.experimental_get_query_params()
+if "form_id" in query_params:
+    employee_form_submission()
+else:
+    if not st.session_state.admin_logged_in:
+        admin_login()
+    else:
+        st.success("Welcome, Admin!")
+        upload_files()
+        if "form_template" in st.session_state:
+            show_form_interface()
+            generate_form_link()
+            download_responses()
