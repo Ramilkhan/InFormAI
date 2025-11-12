@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import os
 import uuid
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # --- Page Config ---
 st.set_page_config(page_title="Dynamic Form Generator", layout="wide")
@@ -19,6 +22,63 @@ if "form_id" not in st.session_state:
     st.session_state.form_id = None
 if "form_template" not in st.session_state:
     st.session_state.form_template = None
+if "employee_list" not in st.session_state:
+    st.session_state.employee_list = None
+
+
+# --- Email Sending Function ---
+def send_email_to_employees(share_link, employees_df):
+    try:
+        smtp_server = st.secrets["SMTP_SERVER"]
+        smtp_port = st.secrets["SMTP_PORT"]
+        email_sender = st.secrets["EMAIL_SENDER"]
+        email_password = st.secrets["EMAIL_PASSWORD"]
+
+        # Filter valid emails
+        email_col = [col for col in employees_df.columns if "email" in col.lower()]
+        if not email_col:
+            st.warning("⚠️ No column found with 'email' in its name.")
+            return
+
+        email_col = email_col[0]
+        recipients = employees_df[email_col].dropna().unique().tolist()
+
+        if not recipients:
+            st.warning("⚠️ No valid email addresses found.")
+            return
+
+        # Create email content
+        subject = "Please Fill Out This Form"
+        body = f"""
+        Dear Employee,
+
+        Please fill out the following form:
+
+        {share_link}
+
+        Best regards,
+        HR Team
+        """
+
+        msg = MIMEMultipart()
+        msg["From"] = email_sender
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "plain"))
+
+        # Send emails
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()
+        server.login(email_sender, email_password)
+
+        for recipient in recipients:
+            msg["To"] = recipient
+            server.sendmail(email_sender, recipient, msg.as_string())
+
+        server.quit()
+        st.success(f"✅ Email sent successfully to {len(recipients)} employees!")
+
+    except Exception as e:
+        st.error(f"❌ Failed to send emails: {e}")
 
 
 # --- ADMIN LOGIN FUNCTION ---
@@ -63,20 +123,25 @@ def show_form_interface():
         st.subheader("📋 Form Preview")
         st.dataframe(form_df)
 
-        if st.button("💾 Generate Shareable Link"):
+        if st.button("💾 Generate Shareable Link & Send Email"):
             form_id = str(uuid.uuid4())
             st.session_state.form_id = form_id
             form_path = os.path.join(FORM_FOLDER, f"{form_id}.csv")
             form_df.to_csv(form_path, index=False)
             st.success("✅ Form saved successfully!")
 
-            # ✅ Use your Streamlit public URL here
             base_url = st.secrets.get("BASE_URL", "https://informai-9owst2mknhnbtf9ukychaq.streamlit.app")
             share_link = f"{base_url}?form_id={form_id}"
 
             st.markdown("### 🔗 Share this link with employees:")
             st.code(share_link, language="text")
             st.markdown("📋 Anyone with this link can fill out the form from any browser.")
+
+            if st.session_state.employee_list is not None:
+                if st.button("📨 Send Link via Email to Employees"):
+                    send_email_to_employees(share_link, st.session_state.employee_list)
+            else:
+                st.warning("⚠️ Please upload employee list first.")
 
     else:
         st.info("Please upload a form template first.")
