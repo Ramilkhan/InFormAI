@@ -34,7 +34,7 @@ def send_form_link_to_employees(share_link, employees_df):
         email_sender = st.secrets["EMAIL_SENDER"]
         email_password = st.secrets["EMAIL_PASSWORD"]
 
-        # Find column containing email addresses
+        # find email column
         email_col = [c for c in employees_df.columns if "email" in c.lower()]
         if not email_col:
             st.warning("⚠️ No column found containing 'email'.")
@@ -45,7 +45,6 @@ def send_form_link_to_employees(share_link, employees_df):
             st.warning("⚠️ No valid email addresses found.")
             return
 
-        # Compose the email
         subject = "Please Fill Out the Company Form"
         body = f"""Dear Employee,
 
@@ -71,6 +70,7 @@ HR Department
 
         server.quit()
         st.success(f"✅ Form link sent successfully to {len(recipients)} employees!")
+
     except Exception as e:
         st.error(f"❌ Email sending failed: {e}")
 
@@ -124,12 +124,13 @@ def show_form_interface():
             form_df.to_csv(form_path, index=False)
             st.success("✅ Form saved successfully!")
 
-            # Public base URL
-            base_url = st.secrets.get("BASE_URL", "https://informai-9owst2mknhnbtf9ukychaq.streamlit.app")
-            share_link = f"{base_url}?form_id={form_id}"
+            # ✅ Always use public Streamlit URL
+            base_url = "https://informai-9owst2mknhnbtf9ukychaq.streamlit.app"
+            share_link = f"{base_url}/?form_id={form_id}"
 
             st.markdown("### 🔗 Shareable Form Link:")
             st.code(share_link, language="text")
+            st.markdown("📋 Anyone with this link can fill out the form from any browser.")
 
             if st.session_state.employee_list is not None:
                 send_form_link_to_employees(share_link, st.session_state.employee_list)
